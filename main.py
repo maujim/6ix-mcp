@@ -3,7 +3,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP server
-mcp = FastMCP("content-database-mcp")
+mcp = FastMCP("6ix-mcp")
 
 @mcp.tool()
 async def my_tool() -> str:
