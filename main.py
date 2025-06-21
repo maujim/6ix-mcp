@@ -1,8 +1,8 @@
 from typing import Any
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 
-import json
+import json, time
 from urllib.parse import urljoin
 import requests
 
@@ -10,23 +10,20 @@ import requests
 base_url = "https://ckan0.cf.opendata.inter.prod-toronto.ca/"
 
 
-def api(path: str, params={}):
+async def api(path: str, params: dict = {}) -> dict:
     """
     Makes a cached GET request to the full URL composed of base_url + path,
     with params converted from frozenset to dict.
     """
-    # Convert params back to a dictionary
-    assert isinstance(params, dict)
 
     # Construct the full URL
     url = urljoin(base_url, path)
 
-    # Make the request
-    response = requests.get(url, params=params)
-    response.raise_for_status()
-
-    print(response.url)
-    return response.json()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        print(response.url)
+        return response.json()
 
 
 # Initialize FastMCP server
@@ -58,7 +55,7 @@ valid_dataset_names = prep_datasets()
 
 
 @mcp.tool()
-async def list_datasets() -> str:
+async def list_datasets() -> list[str]:
     """list all available datasets
 
     caveat: only datasets where we can access the db columns via the api
@@ -68,7 +65,19 @@ async def list_datasets() -> str:
 
 
 @mcp.tool()
-async def get_dataset_columns(dataset_name: str) -> str:
+async def search_datasets(queries: list[str]) -> list[str]:
+    """a simple string search across all available datasets names. multiple
+    queries can be provided"""
+
+    resp = []
+    for query in queries:
+        resp.extend([nn for nn in valid_dataset_names if query.lower() in nn.lower()])
+
+    return resp
+
+
+@mcp.tool()
+async def get_dataset_columns(dataset_name: str) -> list[str]:
     """This returns a description of the columns used in this data set"""
 
     with open("datasets/package_index.json", "r") as fp:
@@ -88,11 +97,11 @@ async def get_dataset_columns(dataset_name: str) -> str:
     if good_resources is None:
         return "unknown error occurred"
 
-    resp = api(
+    resp = await api(
         "/api/3/action/datastore_search", {"resource_id": good_resources[0]["id"]}
     )
-    description = resp["result"]["fields"]
-    return description
+    fields: list[str] = list(map(json.dumps, resp["result"]["fields"]))
+    return fields
 
 
 if __name__ == "__main__":
