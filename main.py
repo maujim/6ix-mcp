@@ -1,15 +1,18 @@
 from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP, Context
+from async_lru import alru_cache
 
 import json, time
 from urllib.parse import urljoin
 import requests
+import functools
 
 
 base_url = "https://ckan0.cf.opendata.inter.prod-toronto.ca/"
 
 
+@alru_cache(maxsize=100)
 async def api(path: str, params: dict = {}) -> dict:
     """
     Makes a cached GET request to the full URL composed of base_url + path,
@@ -30,38 +33,17 @@ async def api(path: str, params: dict = {}) -> dict:
 mcp = FastMCP("6ix-mcp")
 
 
-@mcp.tool()
-async def my_tool() -> str:
-    """My awesome tool."""
-    print("I am going to do something awesome today!")
+async def all_packages() -> list[str]:
+    response = await api("/api/3/action/package_list")
 
-
-def prep_datasets() -> str:
-    valid_names = []
-
-    with open("datasets/package_index.json", "r") as fp:
-        data = json.load(fp)
-        for result in data["result"]["results"]:
-            if result["resources"] is not None:
-                for resource in result["resources"]:
-                    if resource["datastore_active"] == True:
-                        valid_names.append(result["name"])
-                        break
-
-    return valid_names
-
-
-valid_dataset_names = prep_datasets()
+    return response["result"]
 
 
 @mcp.tool()
 async def list_datasets() -> list[str]:
-    """list all available datasets
+    """list all available datasets"""
 
-    caveat: only datasets where we can access the db columns via the api
-    """
-
-    return valid_dataset_names
+    return await all_packages()
 
 
 @mcp.tool()
@@ -69,9 +51,11 @@ async def search_datasets(queries: list[str]) -> list[str]:
     """a simple string search across all available datasets names. multiple
     queries can be provided"""
 
+    names = await all_packages()
+
     resp = []
     for query in queries:
-        resp.extend([nn for nn in valid_dataset_names if query.lower() in nn.lower()])
+        resp.extend([nn for nn in names if query.lower() in nn.lower()])
 
     return resp
 
@@ -80,22 +64,22 @@ async def search_datasets(queries: list[str]) -> list[str]:
 async def get_dataset_columns(dataset_name: str) -> list[str]:
     """This returns a description of the columns used in this data set"""
 
-    with open("datasets/package_index.json", "r") as fp:
-        data = json.load(fp)
-        target = [
-            result
-            for result in data["result"]["results"]
-            if result["name"] == dataset_name
-        ]
-        if target is None:
-            return "no matching dataset found"
-        target = target[0]
+    resp = await api(
+        "/api/3/action/current_package_list_with_resources", {"limit": 999}
+    )
+
+    data = [x for x in resp["result"] if x["name"] == dataset_name]
+
+    if not data:
+        return ["no matching dataset found"]
+
+    data = data[0]
 
     good_resources = [
-        resource for resource in target["resources"] if resource["datastore_active"]
+        resource for resource in data["resources"] if resource["datastore_active"]
     ]
-    if good_resources is None:
-        return "unknown error occurred"
+    if not good_resources:
+        return ["we cannot check db columns via the api for this dataset"]
 
     resp = await api(
         "/api/3/action/datastore_search", {"resource_id": good_resources[0]["id"]}
